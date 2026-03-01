@@ -2,6 +2,8 @@
 
 This repository contains the PyTorch implementation of ARROW, **“ARROW: An Adaptive Rollout and Routing Method for Global Weather Forecasting.”** In this work, we introduce **ARROW** for adaptively predicting global weather. Our model is composed of two stages: one-step pre-training for the **Multi-Interval Forecasting Model**, followed by multi-step fine-tuning for **Adaptive Rollout Scheduler**.
 
+🚩 News (2026.1) ARROW has been accepted by ICLR 2026 (poster).
+
 <img width="100%" src="./figures/ARROW.png">
 
 ## Install
@@ -30,6 +32,7 @@ We trained ARROW on ERA5 data (1.40625°) from WeatherBench 1. To download WB1 d
 ```bash
 wget -c "https://dataserv.ub.tum.de/s/m1524895/download?path=%2F1.40625deg%2Fu_component_of_wind&files=u_component_of_wind_1.40625deg.zip" -O u_component_of_wind_1.40625deg.zip
 ```
+
 **Raw Data Directory**
 
 After downloading the WB1 data, please organize the files as follows:
@@ -144,8 +147,7 @@ python ./Run/fine_tune_RL.py\
 
 We provide two inference ways:
 
-* fixed strategy
-
+- fixed strategy
   ```shell
   python Run/inference_PL.py \
       --config configs/ARROW/inference.yaml \
@@ -153,9 +155,7 @@ We provide two inference ways:
       --data.val_batch_size 4 \
       --model.pretrained_path [CHECKPOINT]
   ```
-
-* adaptive strategy
-
+- adaptive strategy
   ```shell
   python ./Run/inference_RL.py\
       --config configs/ARROW/inference_RL.yaml \
