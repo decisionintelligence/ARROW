@@ -1,0 +1,180 @@
+seed_everything: 42
+
+# ---------------------------- TRAINER -------------------------------------------
+trainer:
+  default_root_dir: ./results/ARROW/${timestamp:}_finetune_RL
+
+  precision: 32
+
+  devices: "1,"
+  num_nodes: 1
+  accelerator: gpu
+  strategy: ddp
+
+  min_epochs: 1
+  max_epochs: 20
+  enable_progress_bar: true
+
+  sync_batchnorm: True
+  enable_checkpointing: True
+  num_sanity_val_steps: 1
+  log_every_n_steps: 5
+
+  # debugging
+  fast_dev_run: false
+
+  logger:
+    class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+    init_args:
+      project: 'Weather_Forecast'
+      save_dir: swanlab_log
+      experiment_name: ${timestamp:}_ARROW_finetune_RL
+      mode: cloud
+
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: "step"
+
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: "checkpoints"
+        monitor: "train/dqn_loss"
+        mode: "min"
+        save_top_k: 1
+        save_last: True
+        verbose: False
+        filename: "epoch_{epoch:03d}"
+        auto_insert_metric_name: False
+
+    - class_path: lightning.pytorch.callbacks.RichModelSummary
+      init_args:
+        max_depth: -1
+
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  weather_path: None # should be specified
+  root_dir: ./dataset/
+  agent_lr: 5e-5
+  fine_tune_lr: 5e-7
+  batch_size: 64
+  sync_rate: 10
+  replay_size: 1000
+  targets: [72, 78, 84, 90, 120, 126, 132, 138, 168, 174, 180, 186, 216, 222, 228, 234, 240, 246, 252, 258, 336, 342, 348, 354]
+  step_punish: 0.02
+  data_freq: 6
+  eps_start: 1.0
+  eps_end: 0.01
+  gamma: 0.99
+  refresh_size: 200
+  dataset_sample_size: 1000
+  start_year: 2008
+  end_year: 2016
+  env_device_num: 1
+
+  weather_net:
+    class_path: GlobWeather.models.hub.Arrow.arrow
+    init_args:
+      variables: [
+        "2m_temperature",
+        "10m_u_component_of_wind",
+        "10m_v_component_of_wind",
+        "total_cloud_cover",
+        "geopotential_50",
+        "geopotential_100",
+        "geopotential_150",
+        "geopotential_200",
+        "geopotential_250",
+        "geopotential_300",
+        "geopotential_400",
+        "geopotential_500",
+        "geopotential_600",
+        "geopotential_700",
+        "geopotential_850",
+        "geopotential_925",
+        "geopotential_1000",
+        "u_component_of_wind_50",
+        "u_component_of_wind_100",
+        "u_component_of_wind_150",
+        "u_component_of_wind_200",
+        "u_component_of_wind_250",
+        "u_component_of_wind_300",
+        "u_component_of_wind_400",
+        "u_component_of_wind_500",
+        "u_component_of_wind_600",
+        "u_component_of_wind_700",
+        "u_component_of_wind_850",
+        "u_component_of_wind_925",
+        "u_component_of_wind_1000",
+        "v_component_of_wind_50",
+        "v_component_of_wind_100",
+        "v_component_of_wind_150",
+        "v_component_of_wind_200",
+        "v_component_of_wind_250",
+        "v_component_of_wind_300",
+        "v_component_of_wind_400",
+        "v_component_of_wind_500",
+        "v_component_of_wind_600",
+        "v_component_of_wind_700",
+        "v_component_of_wind_850",
+        "v_component_of_wind_925",
+        "v_component_of_wind_1000",
+        "temperature_50",
+        "temperature_100",
+        "temperature_150",
+        "temperature_200",
+        "temperature_250",
+        "temperature_300",
+        "temperature_400",
+        "temperature_500",
+        "temperature_600",
+        "temperature_700",
+        "temperature_850",
+        "temperature_925",
+        "temperature_1000",
+        "specific_humidity_50",
+        "specific_humidity_100",
+        "specific_humidity_150",
+        "specific_humidity_200",
+        "specific_humidity_250",
+        "specific_humidity_300",
+        "specific_humidity_400",
+        "specific_humidity_500",
+        "specific_humidity_600",
+        "specific_humidity_700",
+        "specific_humidity_850",
+        "specific_humidity_925",
+        "specific_humidity_1000",
+      ]
+      const_variables: []
+      in_img_size: [128, 256]
+      patch_size: 4
+      hidden_size: 1024
+      depth: 16
+      num_heads: 16
+      mlp_ratio: 2.0
+      rope_type: "mixed"
+      rope_theta: 100.0
+      use_mla: False
+      use_moe: True
+      routed_num_experts: 9
+      shared_num_experts: 1
+      selected_experts: 3
+      list_time_intervals: [6, 12, 24]
+      ring_pos_embed: True
+  
+  qnet:
+    class_path: GlobWeather.models.RL.models.QNet_V2
+    init_args:
+      target_time: ${model.targets}
+      data_freq: ${model.data_freq}
+      month_dim: 32
+      week_dim: 16
+      time_dim: 32
+      target_dim: 128
+      hidden_dim: 1024
+      state_dim: 1024
+  
+  target_net: ${model.qnet}

@@ -1,0 +1,177 @@
+seed_everything: 42
+
+# ---------------------------- TRAINER -------------------------------------------
+trainer:
+  default_root_dir: ./results/ARROW/${timestamp:}_pretrain_one_step
+
+  precision: 16-mixed
+
+  devices: "4,5"
+  num_nodes: 1
+  accelerator: gpu
+  strategy: ddp
+
+  min_epochs: 1
+  max_epochs: 100
+  enable_progress_bar: true
+
+  sync_batchnorm: True
+  enable_checkpointing: True
+  num_sanity_val_steps: 1
+
+  # debugging
+  fast_dev_run: false
+
+  logger:
+    class_path: swanlab.integration.pytorch_lightning.SwanLabLogger
+    init_args:
+      project: 'Weather_Forecast'
+      save_dir: swanlab_log
+      experiment_name: ${timestamp:}_ARROW_pretrain_one_step
+      mode: cloud
+    
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: "step"
+
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        dirpath: "checkpoints"
+        monitor: "val/w_mse_aggregate_72_hrs_ensemble_mean" # name of the logged metric which determines when model is improving
+        mode: "min"
+        save_top_k: 1
+        save_last: True
+        verbose: False
+        filename: "epoch_{epoch:03d}"
+        auto_insert_metric_name: False
+
+    - class_path: lightning.pytorch.callbacks.EarlyStopping
+      init_args:
+        monitor: "val/w_mse_aggregate_72_hrs_ensemble_mean"
+        mode: "min"
+        patience: 10
+        min_delta: 0.
+
+    - class_path: lightning.pytorch.callbacks.RichModelSummary
+      init_args:
+        max_depth: -1
+
+    - class_path: lightning.pytorch.callbacks.TQDMProgressBar
+
+# ---------------------------- MODEL -------------------------------------------
+model:
+  weighted_loss: True
+  lr: 3e-4
+  beta_1: 0.9
+  beta_2: 0.95
+  weight_decay: 1e-5
+  warmup_epochs: 5
+  max_epochs: 100
+  warmup_start_lr: 1e-8
+  eta_min: 5e-7
+  pretrained_path: null
+
+  net:
+    class_path: GlobWeather.models.hub.Arrow.arrow
+    init_args:
+      variables: ${data.variables}
+      const_variables: []
+      in_img_size: [128, 256]
+      patch_size: 4
+      hidden_size: 1024
+      depth: 16
+      num_heads: 16
+      mlp_ratio: 2.0
+      rope_type: "mixed"
+      rope_theta: 100.0
+      use_mla: False
+      use_moe: True
+      routed_num_experts: 9
+      shared_num_experts: 1
+      selected_experts: 3
+      list_time_intervals: ${data.list_train_intervals}
+      ring_pos_embed: True
+
+# ---------------------------- DATA -------------------------------------------
+data:
+  root_dir: /home/data/wb2/0.25deg_6hr_h5df/
+  variables: [
+        "2m_temperature",
+        "10m_u_component_of_wind",
+        "10m_v_component_of_wind",
+        "total_cloud_cover",
+        "geopotential_50",
+        "geopotential_100",
+        "geopotential_150",
+        "geopotential_200",
+        "geopotential_250",
+        "geopotential_300",
+        "geopotential_400",
+        "geopotential_500",
+        "geopotential_600",
+        "geopotential_700",
+        "geopotential_850",
+        "geopotential_925",
+        "geopotential_1000",
+        "u_component_of_wind_50",
+        "u_component_of_wind_100",
+        "u_component_of_wind_150",
+        "u_component_of_wind_200",
+        "u_component_of_wind_250",
+        "u_component_of_wind_300",
+        "u_component_of_wind_400",
+        "u_component_of_wind_500",
+        "u_component_of_wind_600",
+        "u_component_of_wind_700",
+        "u_component_of_wind_850",
+        "u_component_of_wind_925",
+        "u_component_of_wind_1000",
+        "v_component_of_wind_50",
+        "v_component_of_wind_100",
+        "v_component_of_wind_150",
+        "v_component_of_wind_200",
+        "v_component_of_wind_250",
+        "v_component_of_wind_300",
+        "v_component_of_wind_400",
+        "v_component_of_wind_500",
+        "v_component_of_wind_600",
+        "v_component_of_wind_700",
+        "v_component_of_wind_850",
+        "v_component_of_wind_925",
+        "v_component_of_wind_1000",
+        "temperature_50",
+        "temperature_100",
+        "temperature_150",
+        "temperature_200",
+        "temperature_250",
+        "temperature_300",
+        "temperature_400",
+        "temperature_500",
+        "temperature_600",
+        "temperature_700",
+        "temperature_850",
+        "temperature_925",
+        "temperature_1000",
+        "specific_humidity_50",
+        "specific_humidity_100",
+        "specific_humidity_150",
+        "specific_humidity_200",
+        "specific_humidity_250",
+        "specific_humidity_300",
+        "specific_humidity_400",
+        "specific_humidity_500",
+        "specific_humidity_600",
+        "specific_humidity_700",
+        "specific_humidity_850",
+        "specific_humidity_925",
+        "specific_humidity_1000",
+      ]
+  list_train_intervals: [6, 12, 24]
+  steps: 1
+  val_lead_times: [6, 72]
+  data_freq: 6
+  batch_size: 6
+  val_batch_size: 4
+  num_workers: 8
+  pin_memory: False

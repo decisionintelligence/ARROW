@@ -1,0 +1,150 @@
+import torch
+import numpy as np
+from GlobWeather.models.RL.Env import WeatherEnv
+import time
+from collections import deque, namedtuple
+from typing import Iterator, Tuple
+from torch import nn
+from torch.utils.data.dataset import IterableDataset
+from GlobWeather.models.RL.models import QNet_V1, QNet_V2
+
+Experience = namedtuple(
+    "Experience",
+    field_names=["state", "action_idx", "reward", "done", "new_state"],
+)
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.buffer = deque(maxlen=capacity)
+    
+    def __len__(self):
+        return len(self.buffer)
+    
+    def append(self, experience: Experience) -> None:
+        self.buffer.append(experience)
+
+    def sample(self, size: int):
+        indices = np.random.choice(len(self.buffer), size, replace=False)
+        states_1 = [self.buffer[idx][0][:] for idx in indices]
+        states_2 = torch.concat([self.buffer[idx][0].cur_weather_z for idx in indices], dim=0)
+        actions, rewards, dones = zip(*(self.buffer[idx][1:-1] for idx in indices))
+        next_states_1 = [self.buffer[idx][-1][:] for idx in indices]
+        next_states_2 = torch.concat([self.buffer[idx][-1].cur_weather_z for idx in indices], dim=0)
+
+        return (
+            (np.array(states_1), states_2),
+            np.array(actions),
+            np.array(rewards, dtype=np.float32),
+            np.array(dones, dtype=bool),
+            (np.array(next_states_1), next_states_2),
+        )
+    
+    def clear(self):
+        self.buffer.clear()
+    
+
+class RLDataset(IterableDataset):
+    """Iterable Dataset containing the ExperienceBuffer which will be updated with new experiences during training.
+
+    Args:
+        buffer: replay buffer
+        sample_size: number of experiences to sample at a time
+
+    """
+
+    def __init__(self, buffer: ReplayBuffer, sample_size: int = 200) -> None:
+        self.buffer = buffer
+        self.sample_size = sample_size
+
+    def __iter__(self) -> Iterator[Tuple]:
+        states, actions, rewards, dones, new_states = self.buffer.sample(self.sample_size)
+        for i in range(len(dones)):
+            yield (states[0][i], states[1][i]), actions[i], rewards[i], dones[i], (new_states[0][i], new_states[1][i])
+
+
+class Agent:
+    def __init__(self, env, replay_buffer: ReplayBuffer, list_intevals=[6, 12, 24]):
+        self.env = env
+        self.replay_buffer = replay_buffer
+        self.action_space = list_intevals
+        self.reset()
+    
+    def reset(self, year=None, time_idx=None, target_time=None):
+        self.state = self.env.reset(year, time_idx, target_time)
+
+    # def get_action_random(self):
+    #     # random & valid action
+    #     rest_time = self.state[3]
+    #     valid_action = [i for i, action in enumerate(self.action_space) if rest_time - action >= 0]
+    #     return np.random.choice(valid_action)
+    
+    def get_action_dqn(self, net: nn.Module, epsilon: float, device='cpu'):
+        # ! valid action
+        # note: state is a list
+        rest_time = self.state[3]
+        valid_action = [i for i, action in enumerate(self.action_space) if rest_time - action >= 0]
+        if np.random.random() < epsilon:
+            action = np.random.choice(valid_action)
+        else:
+            state_time = torch.tensor(self.state[0:]).unsqueeze(0).to(device)
+            state_weather = self.state.cur_weather_z.to(device)
+            if isinstance(net, QNet_V1):
+                q_values = net(state_time)
+            elif isinstance(net, QNet_V2):
+                q_values = net(state_time, state_weather)
+            else:
+                raise NotImplementedError
+            _, action = torch.max(q_values[:, valid_action], dim=1)
+            action = valid_action[action.item()]
+        
+        return action
+    
+    @torch.no_grad()
+    def play_step(self, net: nn.Module, epsilon: float, device='cpu'):
+        action = self.get_action_dqn(net, epsilon, device)
+        new_state, reward, terminated, truncated, info = self.env.step(action)
+        if terminated or truncated: done = True
+        else: done = False
+
+        exp = Experience(self.state, action, reward, done, new_state)
+        self.replay_buffer.append(exp)
+
+        self.state = new_state
+        if done:
+            self.reset()
+        return reward, done
+
+    @torch.no_grad()
+    def run_episode(self, net: nn.Module, epsilon: float, device='cpu',
+                    year=None, time_idx=None, target_time=None, return_pd=False):
+        self.reset(year, time_idx, target_time)
+        done = False
+        action_list = []
+        while not done:
+            action = self.get_action_dqn(net, epsilon, device)
+            self.state, reward, terminated, truncated, info = self.env.step(action)
+            if terminated or truncated: done = True
+            action_list.append(self.action_space[action])
+        
+        return action_list
+    
+    def get_decision(self, net: nn.Module, epsilon: float, device='cpu',
+                    year=None, time_idx=None, target_time=None):
+        self.reset(year, time_idx, target_time)
+        done = False
+        Max_T = self.env.target_time // self.env.data_freq
+        action_list = []
+        rollout_pd = []
+        while not done:
+            action = self.get_action_dqn(net, epsilon, device)
+            self.state, _, terminated, truncated, _ = self.env.fine_tune_step(action)
+            if terminated or truncated: done = True
+            action_list.append(self.action_space[action])
+            rollout_pd.append(self.env.cur_weather)
+        
+        action_list.extend([0] * (Max_T - len(action_list)))
+        rollout_pd.extend([torch.zeros_like(rollout_pd[-1])] * (Max_T - len(rollout_pd)))
+        rollout_pd = torch.stack(rollout_pd)
+        rollout_pd = rollout_pd.transpose(0, 1)
+        
+        return action_list, rollout_pd
