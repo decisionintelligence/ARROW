@@ -118,11 +118,14 @@ class Fine_tune_RLDataset:
             diffs = []
             out_mean = []
             out_std = []
+            acc_steps = 0
             for step in steps_trajectory[i]:
-                out_path = get_out_path(self.root_dir, y, idx, step)
+                acc_steps += step
+                out_path = get_out_path(self.root_dir, y, idx, acc_steps)
                 out = get_data_given_path(out_path, variables)
                 diff = out - last_out
                 diff = torch.from_numpy(diff)
+                last_out = out
                 if step != 0:
                     diffs.append(self.out_transform_dict[step*self.data_freq](diff))
                     out_mean.append(torch.from_numpy(self.out_transform_dict[step*self.data_freq].mean))

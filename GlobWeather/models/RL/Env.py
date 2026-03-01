@@ -1,13 +1,13 @@
 import numpy as np
 import os
 from metrics.metrics import *
+from GlobWeather.models.hub.Arrow import arrow
 from GlobWeather.models.RL.RL_utils import variables
 from GlobWeather.data.iterative_dataset import get_data_given_path
 from torchvision.transforms import transforms
 from typing import Union
 from GlobWeather.utils.data_utils import CONSTANTS
 from torch import nn
-from GlobWeather.models.hub.Arrow import arrow
 from dataclasses import dataclass
 
 
@@ -18,7 +18,7 @@ def get_next_time(root_dir, year, inp_file_idx, steps):
     out_file_idx = inp_file_idx + steps
     out_path = os.path.join(root_dir, f'{year}_{out_file_idx:04}.h5')
     if not os.path.exists(out_path):
-        # 跨年
+        # cross-year
         for i in range(steps):
             out_file_idx = inp_file_idx + i
             out_path = os.path.join(root_dir, f'{year}_{out_file_idx:04}.h5')
@@ -109,13 +109,13 @@ class WeatherForcast(nn.Module):
     def forward_onestep(self, x: torch.Tensor, variables, interval):
         interval_tensor = torch.Tensor([interval]).to(device=x.device, dtype=x.dtype) / 10.0
         interval_tensor = interval_tensor.repeat(x.shape[0])
-        pred_diff = self(x, variables, interval_tensor) # diff in the normalized space
-        pred_diff = self.replace_constant(pred_diff, variables)
-        pred_diff = self.reverse_diff_transform[interval](pred_diff) # diff in the original space
+        pred_diff_norm = self(x, variables, interval_tensor) # diff in the normalized space
+        pred_diff_norm = self.replace_constant(pred_diff_norm, variables)
+        pred_diff = self.reverse_diff_transform[interval](pred_diff_norm) # diff in the original space
         pred = self.reverse_inp_transform(x) + pred_diff # prediction in the original space
         x = self.inp_transform(pred) # prediction in the normalized space
 
-        return x
+        return x, pred_diff_norm
 
     @torch.no_grad
     def forward_validation(self, x: torch.Tensor, variables, interval, steps):
@@ -150,7 +150,7 @@ class WeatherEnv:
     def __init__(self, root_dir, split, device, net, pretrained_path,
                  data_freq=6, start_year=2010, end_year=2017,
                  targets: Union[int, list]=[24, 48, 72, 96, 120, 144, 168],
-                 step_punish=0.01):
+                 step_punish=0.01, reward_scale_factor=3):
         self.targets = targets
         self.start_year = start_year
         self.end_year = end_year
@@ -165,6 +165,7 @@ class WeatherEnv:
         self.state = Env_State()
         self.action_space = [6, 12, 24]
         self.step_punish = step_punish
+        self.reward_scale_factor = reward_scale_factor
 
     def reset(self, year=None, time_idx=None, target_time=None):
         # if specific, it means RL inference
@@ -192,7 +193,7 @@ class WeatherEnv:
         action = self.action_space[action_idx]
 
         with torch.no_grad():
-            pred = self.weather_model.forward_onestep(self.cur_weather, variables, action)
+            pred, _ = self.weather_model.forward_onestep(self.cur_weather, variables, action)
         self.cur_weather = pred
 
         year, time_idx = self.state[0], self.state[1]
@@ -211,21 +212,27 @@ class WeatherEnv:
         
         if rest_time <= 0: 
             terminated = True
-            reward = self.get_reward(year, time_idx, pred)
+            reward = self.get_reward(year, time_idx, pred)*self.reward_scale_factor
         else:
             terminated = False
-            reward = self.get_reward(year, time_idx, pred) - self.step_punish  # 步长代价
+            reward = self.get_reward(year, time_idx, pred)/self.reward_scale_factor - self.step_punish
         
         truncated = False
         info = {}
         return new_state, reward, terminated, truncated, info
     
-    def fine_tune_step(self, action_idx):
+    def fine_tune_step(self, action_idx, sign_no_grad=False):
         action = self.action_space[action_idx]
 
-        pred = self.weather_model.forward_onestep(self.cur_weather, variables, action)
+        # 1. get next weather state
+        if sign_no_grad:
+            with torch.no_grad():
+                pred, pred_diff_norm = self.weather_model.forward_onestep(self.cur_weather, variables, action)
+        else:
+            pred, pred_diff_norm = self.weather_model.forward_onestep(self.cur_weather, variables, action)
         self.cur_weather = pred
 
+        # 2. update state
         year, time_idx = self.state.year, self.state.time_idx
         travel_time = self.state.travel_time
         rest_time = self.state.rest_time
@@ -239,16 +246,18 @@ class WeatherEnv:
         cur_weather_z = self.weather_model.get_weather_representations(self.cur_weather, variables)  # B(1) x L x D
         new_state = Env_State(year, time_idx, travel_time, rest_time, self.target_time, cur_weather_z)
         self.state = new_state
-        
+
+        # 3. get reward and check done
         if rest_time <= 0: 
             terminated = True
+            reward = self.get_reward(year, time_idx, pred)*self.reward_scale_factor
         else:
             terminated = False
+            reward = self.get_reward(year, time_idx, pred)/self.reward_scale_factor - self.step_punish
         
         truncated = False
         info = {}
-        reward = 0
-        return new_state, reward, terminated, truncated, info
+        return new_state, reward, terminated, truncated, pred_diff_norm
     
     def get_reward(self, year, time_idx, pred):
         truth = get_data_given_path(os.path.join(self.root_dir, f'{year}_{time_idx:04}.h5'), variables)

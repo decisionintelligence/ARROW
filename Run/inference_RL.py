@@ -9,7 +9,6 @@ from lightning.pytorch.strategies import FSDPStrategy, DDPStrategy
 from GlobWeather.models.hub.Arrow import Block, WeatherEmbedding
 from GlobWeather.models.RL_module import RL_InferenceModule
 
-from swanlab.integration.pytorch_lightning import SwanLabLogger
 from lightning.pytorch.loggers import CSVLogger
 
 torch.set_float32_matmul_precision('high')

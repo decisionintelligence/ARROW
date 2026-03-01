@@ -12,7 +12,7 @@ trainer:
   strategy: ddp
 
   min_epochs: 1
-  max_epochs: 20
+  max_epochs: 50
   enable_progress_bar: true
 
   sync_batchnorm: True
@@ -57,20 +57,23 @@ trainer:
 model:
   weather_path: None # should be specified
   root_dir: ./dataset/
-  agent_lr: 5e-5
-  fine_tune_lr: 5e-7
-  batch_size: 64
+  agent_lr: 2e-4
+  fine_tune_lr: 1e-7
+  batch_size: 256
   sync_rate: 10
-  replay_size: 1000
-  targets: [72, 78, 84, 90, 120, 126, 132, 138, 168, 174, 180, 186, 216, 222, 228, 234, 240, 246, 252, 258, 336, 342, 348, 354]
-  step_punish: 0.02
+  fine_tune_rate: 10
+  buffer_size: 9000
+  targets: [120, 126, 132, 138, 168, 174, 180, 186, 216, 222, 228, 234, 336, 342, 348, 354]
+  step_punish: 0.0
+  reward_scale_factor: 1.2
   data_freq: 6
   eps_start: 1.0
   eps_end: 0.01
-  gamma: 0.99
-  refresh_size: 200
-  dataset_sample_size: 1000
-  start_year: 2008
+  gamma: 0.9
+  refresh_size: 2000
+  dataset_sample_size: 8192
+  max_optimize_step: 10
+  start_year: 2009
   end_year: 2016
   env_device_num: 1
 
@@ -166,14 +169,14 @@ model:
       ring_pos_embed: True
   
   qnet:
-    class_path: GlobWeather.models.RL.models.QNet_V2
+    class_path: GlobWeather.models.RL.models.QNet
     init_args:
       target_time: ${model.targets}
       data_freq: ${model.data_freq}
-      month_dim: 32
-      week_dim: 16
-      time_dim: 32
-      target_dim: 128
+      month_dim: 128
+      week_dim: 128
+      time_dim: 512
+      target_dim: 256
       hidden_dim: 1024
       state_dim: 1024
   

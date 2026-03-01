@@ -6,7 +6,7 @@ trainer:
 
   precision: 32
 
-  devices: "5,"
+  devices: "7,"
   num_nodes: 1
   accelerator: gpu
   strategy: ddp
@@ -55,15 +55,15 @@ trainer:
 
 # ---------------------------- MODEL -------------------------------------------
 model:
-  weather_path: None # should be specified
-  
-  root_dir: ./dataset/
-  val_lead_time: [72, 78, 84, 90, 120, 126, 132, 138, 168, 174, 180, 186, 216, 222, 228, 234, 240, 246, 252, 258, 336, 342, 348, 354]
-  step_punish: 0.02
+  weather_path:  # should be specified
+  dqn_path: # should be specified
+  root_dir: # should be specified
+  val_lead_time: [120, 138]
+  step_punish: 0.0
   data_freq: 6
   start_year: 2018
   end_year: 2019
-  env_device_num: 5
+  env_device_num: 7
 
   weather_net:
     class_path: GlobWeather.models.hub.Arrow.arrow
@@ -157,14 +157,13 @@ model:
       ring_pos_embed: True
   
   qnet:
-    class_path: GlobWeather.models.RL.models.QNet_V2
-    load_path: None
+    class_path: GlobWeather.models.RL.models.QNet
     init_args:
-      target_time: ${model.targets}
+      target_time: [120, 126, 132, 138, 168, 174, 180, 186, 216, 222, 228, 234, 336, 342, 348, 354]
       data_freq: ${model.data_freq}
-      month_dim: 32
-      week_dim: 16
-      time_dim: 32
-      target_dim: 128
+      month_dim: 128
+      week_dim: 128
+      time_dim: 512
+      target_dim: 256
       hidden_dim: 1024
       state_dim: 1024
